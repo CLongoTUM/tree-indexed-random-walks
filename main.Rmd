@@ -1,0 +1,279 @@
+---
+title: "Simulation of tree-indexed random walks"
+output: html_document
+date: "2024-07-01"
+---
+
+```{r echo=FALSE, eval = FALSE}
+library(evd)
+```
+
+#### define a, L, psi
+```{r echo=FALSE, eval = FALSE}
+
+# Example 2 of Gantert
+psi <- function(n, r = 0.5) {
+  psi <- ( r*n / log(n) )^(1 / r)
+  
+  return(psi)
+}
+
+L <- function(n) {
+  L <- log(n)
+  
+  return(L)
+}
+
+# assume a = 1 (for simplification)
+a <- function(n) {
+  return(1)
+}
+
+r = 0.5
+
+```
+
+```{r echo=FALSE, eval = FALSE}
+mu = 0
+sd = 1
+
+loc = 0
+scale = 1
+shape = 1
+
+p = 0.75
+```
+
+
+#### define the support
+```{r echo=FALSE, eval = FALSE}
+n_min = 10^1
+n_max = 10^3
+
+support <- seq(from = n_min, to = n_max, by = 1)
+```
+
+
+#### plot psi vs. n
+```{r echo=FALSE, eval = TRUE}
+plot(support, psi(support))
+lines(support, support)
+```
+
+
+#### semiexponential tails
+```{r echo=FALSE, eval = TRUE}
+n_min_tail = 10^4
+n_max_tail = 10^6
+N = 10^4
+
+tail_support <- seq(from = n_min_tail, to = n_max_tail, by = (n_max_tail - n_min_tail) / N)
+
+upper_tail_dist <- function(t, t_min, r, a, L) {
+  
+  prob = a(t) * exp(-L(t) * t^r) * (t >= t_min)
+    
+  return(prob)
+}
+
+distribution_stretched_exp_tail <- function(t, t_min, p = 0.75, r = 0.5, a = 1, L, lower_tail_dist, mu = 0, sd = 1){
+  
+  prob_upper_tail <- (1 - p) + p * (1 - upper_tail_dist(t = t, t_min = t_min, r = r, a = a, L = L))
+  
+  if (lower_tail_dist == "normal") {
+      prob_lower_tail <- (1 - p) * pnorm(t, mean = mu, sd = sd)
+  }
+  
+  prob <- ifelse(t > t_min, prob_upper_tail, ifelse(t == t_min, 1 - p, prob_lower_tail))
+  
+  return(prob)
+}
+
+t_min = 2
+distribution_stretched_exp_tail(t = t_min, t_min, r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd)
+```
+
+#### fréchet upper tail
+```{r echo=FALSE, eval = TRUE}
+distribution_frechet_tail <- function(t, t_min, p = 0.75, loc = 0, scale = 1, shape = 1, lower_tail_dist = "normal", mu = 0, sd = 1) {
+  
+  prob_upper_tail <- (1 - p) + p * pfrechet(q = t, loc = loc, scale = scale, shape = shape, lower.tail = TRUE) 
+  
+  if (lower_tail_dist == "normal") {
+      prob_lower_tail <- (1 - p) * pnorm(t, mean = mu, sd = sd)
+  }
+  
+  prob <- ifelse(t > t_min, prob_upper_tail, ifelse(t == t_min, 1 - p, prob_lower_tail))
+  
+  return(prob)
+}
+
+```
+
+#### plot cdf
+```{r echo=FALSE, eval = TRUE, warning = FALSE}
+n_min = -5
+n_max = 5
+
+support <- seq(from = n_min, to = n_max, by = 0.05)
+
+dist_stretched_exp_tail <- distribution_stretched_exp_tail(
+  t = support, t_min = 2, r = 0.5, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+)
+
+dist_frechet <- distribution_frechet_tail(t = support, t_min, p = p, loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd)
+
+plot(support, dist_stretched_exp_tail, type = "s", ylab = "distribution", xlab = "")
+lines(support, pnorm(support, mean = 0, sd = 1), col = "blue")
+lines(support, dist_frechet, type = "s", col = "orange")
+lines(support, rep(x = 1 - p, times = length(support)), col = "lightgray", lty = 2)
+
+```
+
+#### approximate the density of the stretched exponential distribution
+```{r echo=FALSE, eval = TRUE}
+n_support <- 10^3
+n_min <- -10 + 1 / n_support
+n_max <- 10
+support_density <- seq(from = n_min, to = n_max, by = 1 / n_support)
+
+## use a centered difference approximation to estimate the density
+density_approx <- function(
+  t, h = 1e-5, t_min = 2, p = 0.75, upper_tail_dist = "stretched", r = 0.5, a = function() {1}, L = log, loc = 0, scale = 1, shape = 1, lower_tail_dist = "normal", mu = 0, sd = 1
+) {
+  
+  if (h >= min(diff(support_density))) {
+    warning("The numerical differentiation will not work at the discontinuity t_min.")
+  }
+  
+  if (upper_tail_dist == "stretched") {
+    density_approx <- ( 
+      distribution_stretched_exp_tail(
+        t = t+h, t_min = t_min, p = p, r = r, a = a, L = L, lower_tail_dist = lower_tail_dist, mu = mu, sd = sd
+      ) - distribution_stretched_exp_tail(
+        t = t-h, t_min = t_min, p = p, r = r, a = a, L = L, lower_tail_dist = lower_tail_dist, mu = mu, sd = sd
+      ) 
+    ) / (2 * h)
+  } else if (upper_tail_dist == "frechet") {
+    density_approx <- ( 
+      distribution_frechet_tail(
+        t = t+h, t_min, p = p, loc = loc, scale = scale, shape = shape, lower_tail_dist = lower_tail_dist, mu = mu, sd = sd
+      ) - distribution_frechet_tail(
+          t = t+h, t_min, p = p, loc = loc, scale = scale, shape = shape, lower_tail_dist = lower_tail_dist, mu = mu, sd = sd
+      )
+    ) / (2 * h)
+  }
+  
+  ## density is not defined at the discontinuity t = t_min
+  density_approx <- ifelse(t != t_min, density_approx, NA_real_)
+  
+  return(density_approx)
+}
+
+```
+
+#### plot pdf
+```{r echo=FALSE, eval = TRUE, warning = FALSE}
+
+h = min(1e-7, min(diff(support_density)) / 2)
+
+dist_stretched_exp_tail <- distribution_stretched_exp_tail(
+  t = support_density, t_min = 2, r = 0.5, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+)
+
+density_stretched_exp_tail <- density_approx(
+  t = support_density, h = h, t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+)
+
+density_frechet <- density_approx(
+  t = support_density, h = h, t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+)
+
+density_norm <- dnorm(support_density, mean = mu, sd = sd)
+
+y_max = 0.075 + max(
+  max(density_stretched_exp_tail, na.rm = TRUE), 
+  max(density_frechet, na.rm = TRUE), 
+  max(density_norm)
+)
+
+plot(support_density, density_stretched_exp_tail, type = "s", ylim = c(0, y_max), ylab = "density", xlab = "")
+lines(support_density, density_frechet, col = "orange")
+lines(support_density, density_norm, col = "blue")
+
+# lines(support_density, dist, col = "blue")
+
+```
+
+
+
+
+#### Acceptance-Rejection Algorithm
+```{r echo=FALSE, eval = TRUE}
+
+## scaling factor (lower tail is the same for both distributions)
+C_lower_tail <- 1
+
+## the frechet distribution has a heavier tail than the semiexponential case
+support_upper_tail <- seq(from = t_min, n_max_tail, ( n_min_tail - t_min) / N)
+
+C_upper_tail <- max(
+  density_approx(
+  t = support_density, h = min(1e-7, min(diff(support_density)) / 2), t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+) / density_approx(
+      t = support_density, h = min(1e-7, min(diff(support_density)) / 2), t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+  ), na.rm = TRUE
+)
+
+C <- max(C_lower_tail, C_upper_tail)
+
+```
+
+
+```{r echo=FALSE, eval = TRUE, warning = FALSE}
+X <- c()
+k = 1
+h = 1e-5
+
+set.seed(42)
+
+while (k < 10^4) {
+  B <- rbinom(1, 1, prob = p)
+  y_norm <- min(rnorm(n = 1, mean = mu, sd = 1), t_min - 2*h)
+  
+  ## sample X ~ Frechet, conditional on X > 2
+  u_uniform_for_frechet <- runif(1, min = pfrechet(2, loc = loc, scale = scale, shape = shape), max = 0.99999)
+  y_frechet <- qfrechet(u_uniform_for_frechet, loc = loc, scale = scale, shape = shape)
+  
+  y_mixed_frechet <- (1 - B) * y_norm + B * y_frechet
+  
+  ## uniform variable for A-R decision
+  u_uniform <- runif(1, min = 0, max = 1)
+
+  indicator_acceptance_rejection <- density_approx(
+  t = y_mixed_frechet, h = min(h, min(diff(support_density)) / 2), t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+) / (C * density_approx(
+      t = y_mixed_frechet, h = min(h, min(diff(support_density)) / 2), t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+    )
+  )
+  
+  if (is.na(indicator_acceptance_rejection))
+    {browser()}
+  
+  if (u_uniform <= indicator_acceptance_rejection) {
+    X[k] <- y_mixed_frechet
+    k <- k + 1
+  }
+}
+
+```
+
+```{r echo=FALSE, eval = TRUE}
+summary(X)
+hist(X)
+
+plot(ecdf(X))
+```
+
+
+
