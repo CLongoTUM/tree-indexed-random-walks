@@ -159,7 +159,7 @@ density_approx <- function(
       distribution_frechet_tail(
         t = t+h, t_min, p = p, loc = loc, scale = scale, shape = shape, lower_tail_dist = lower_tail_dist, mu = mu, sd = sd
       ) - distribution_frechet_tail(
-          t = t+h, t_min, p = p, loc = loc, scale = scale, shape = shape, lower_tail_dist = lower_tail_dist, mu = mu, sd = sd
+          t = t-h, t_min, p = p, loc = loc, scale = scale, shape = shape, lower_tail_dist = lower_tail_dist, mu = mu, sd = sd
       )
     ) / (2 * h)
   }
@@ -172,21 +172,52 @@ density_approx <- function(
 
 ```
 
+#### analytical representation of density
+```{r echo=FALSE, eval = TRUE}
+density_analytical <- function(
+    t, t_min = 2, p = 0.75, upper_tail_dist = "stretched", r = 0.5, a = function() {1}, L = log, loc = 0, scale = 1, shape = 1, lower_tail_dist = "normal", mu = 0, sd = 1
+) {
+  
+  if (lower_tail_dist == "normal") {
+    density_lower_tail <- (1 - p) * dnorm(t, mean = mu, sd = sd)
+  }
+  
+  if (upper_tail_dist == "stretched") {
+    density_upper_tail <- ifelse(t > 0, p * ( a(t) * t^(r-1) * exp(-L(t)*t^r) * (r * log(t) + 1) ), NA_real_)
+  } else if (upper_tail_dist == "frechet") {
+      density_upper_tail <- ifelse(t > 0, p * dfrechet(t, loc = loc, scale = scale, shape = shape), NA_real_)
+  }
+  
+  density <- ifelse(t < t_min, density_lower_tail, density_upper_tail)
+  
+  return(density)
+}
+
+```
+
 #### plot pdf
 ```{r echo=FALSE, eval = TRUE, warning = FALSE}
 
 h = min(1e-7, min(diff(support_density)) / 2)
 
-dist_stretched_exp_tail <- distribution_stretched_exp_tail(
+dist_stretched_exp_tail_approx <- distribution_stretched_exp_tail(
   t = support_density, t_min = 2, r = 0.5, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
 )
 
-density_stretched_exp_tail <- density_approx(
+density_stretched_exp_tail_approx <- density_approx(
   t = support_density, h = h, t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
 )
 
-density_frechet <- density_approx(
+density_stretched_exp_tail_analytical <- density_analytical(
+  t = support_density, t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+)
+
+density_frechet_tail_approx <- density_approx(
   t = support_density, h = h, t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+)
+
+density_frechet_tail_analytical <- density_analytical(
+  t = support_density, t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
 )
 
 density_norm <- dnorm(support_density, mean = mu, sd = sd)
@@ -197,11 +228,11 @@ y_max = 0.075 + max(
   max(density_norm)
 )
 
-plot(support_density, density_stretched_exp_tail, type = "s", ylim = c(0, y_max), ylab = "density", xlab = "")
-lines(support_density, density_frechet, col = "orange")
-lines(support_density, density_norm, col = "blue")
+plot(support_density, density_stretched_exp_tail_approx, type = "s", ylim = c(0, y_max), ylab = "density", xlab = "")
+lines(support_density, density_stretched_exp_tail_analytical, col = "blue", lty = 2)
 
-# lines(support_density, dist, col = "blue")
+plot(support_density, density_frechet_tail_approx, type = "s", ylim = c(0, y_max), ylab = "density", xlab = "")
+lines(support_density, density_frechet_tail_analytical, col = "red", lty = 2)
 
 ```
 
@@ -209,19 +240,25 @@ lines(support_density, density_norm, col = "blue")
 
 
 #### Acceptance-Rejection Algorithm
+
+#### using approximated densities
 ```{r echo=FALSE, eval = TRUE}
+
+n_support_approx <- 10^3
+n_min_approx <- t_min - 1 / n_support
+n_max_approx <- 10^3
+support_density_approx <- seq(from = n_min_approx, to = n_max_approx, by = 1 / n_support_approx)
+
 
 ## scaling factor (lower tail is the same for both distributions)
 C_lower_tail <- 1
 
 ## the frechet distribution has a heavier tail than the semiexponential case
-support_upper_tail <- seq(from = t_min, n_max_tail, ( n_min_tail - t_min) / N)
-
 C_upper_tail <- max(
   density_approx(
-  t = support_density, h = min(1e-7, min(diff(support_density)) / 2), t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+  t = support_density_approx, h = min(1e-7, min(diff(support_density_approx)) / 2), t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
 ) / density_approx(
-      t = support_density, h = min(1e-7, min(diff(support_density)) / 2), t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+      t = support_density_approx, h = min(1e-7, min(diff(support_density_approx)) / 2), t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
   ), na.rm = TRUE
 )
 
@@ -229,7 +266,7 @@ C <- max(C_lower_tail, C_upper_tail)
 
 ```
 
-
+#### Accept-Reject using the numerical approximation of densities
 ```{r echo=FALSE, eval = TRUE, warning = FALSE}
 X <- c()
 k = 1
@@ -237,7 +274,7 @@ h = 1e-5
 
 set.seed(42)
 
-while (k < 10^4) {
+while (k < 5 * 10^3) {
   B <- rbinom(1, 1, prob = p)
   y_norm <- min(rnorm(n = 1, mean = mu, sd = 1), t_min - 2*h)
   
@@ -275,5 +312,76 @@ hist(X)
 plot(ecdf(X))
 ```
 
+#### using the analytical densities
+```{r echo=FALSE, eval = TRUE}
+
+n_support_approx <- 10^3
+n_min_approx <- t_min - 1 / n_support
+n_max_approx <- 10^3
+support_density_approx <- seq(from = n_min_approx, to = n_max_approx, by = 1 / n_support_approx)
 
 
+## scaling factor (lower tail is the same for both distributions)
+C_lower_tail <- 1
+
+## the frechet distribution has a heavier tail than the semiexponential case
+C_upper_tail <- max(
+  density_approx(
+  t = support_density_approx, t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+) / density_approx(
+      t = support_density_approx, t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+  ), na.rm = TRUE
+)
+
+C <- max(C_lower_tail, C_upper_tail)
+
+```
+
+#### Accept-Reject using analytical densities
+```{r echo=FALSE, eval = TRUE, warning = FALSE}
+X <- c()
+k = 1
+h = 1e-5
+
+set.seed(42)
+
+while (k < 10^3) {
+  B <- rbinom(1, 1, prob = p)
+  y_norm <- min(rnorm(n = 1, mean = mu, sd = 1), t_min - 2*h)
+  
+  ## sample X ~ Frechet, conditional on X > 2
+  u_uniform_for_frechet <- runif(1, min = pfrechet(2, loc = loc, scale = scale, shape = shape), max = 1)
+  while(u_uniform_for_frechet == 1) {
+    u_uniform_for_frechet <- runif(1, min = pfrechet(2, loc = loc, scale = scale, shape = shape), max = 1)
+  }
+  y_frechet <- qfrechet(u_uniform_for_frechet, loc = loc, scale = scale, shape = shape)
+  
+  y_mixed_frechet <- (1 - B) * y_norm + B * y_frechet
+  
+  ## uniform variable for A-R decision
+  u_uniform <- runif(1, min = 0, max = 1)
+
+  indicator_acceptance_rejection <- density_analytical(
+  t = y_mixed_frechet, t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+) / (C * density_analytical(
+      t = y_mixed_frechet, t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+    )
+  )
+  
+  if (is.na(indicator_acceptance_rejection))
+    {browser()}
+  
+  if (u_uniform <= indicator_acceptance_rejection) {
+    X[k] <- y_mixed_frechet
+    k <- k + 1
+  }
+}
+
+```
+
+```{r echo=FALSE, eval = TRUE}
+summary(X)
+hist(X)
+
+plot(ecdf(X), verticals = TRUE, do.points = FALSE)
+```
