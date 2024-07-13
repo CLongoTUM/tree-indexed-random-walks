@@ -1,0 +1,567 @@
+---
+title: "Simulations"
+output: html_document
+date: "2024-07-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### define a, L, psi
+```{r echo=FALSE, eval = FALSE}
+
+# Example 2 of Gantert
+L <- function(n, r) {
+  L <- log(n)
+  
+  return(L)
+}
+
+psi <- function(n, r = 0.5) {
+  
+  psi <- ifelse(n > 1, ( r*n / log(n) )^(1 / r), 1)
+  
+  return(psi)
+}
+
+# assume a = 1 (for simplification)
+a <- function(n) {
+  return(1)
+}
+
+r = 0.5
+
+
+```
+
+
+```{r echo=FALSE, eval = FALSE}
+
+## parameters for mixture distribution
+t_min = 2
+p_mixture = 0.75
+
+## parameter for L, psi
+r = 1
+
+## parameter of normal distrbution
+mu = 0
+sd = 1
+
+## parameter of Fréchet distribution
+loc = 0
+scale = 1
+shape = 1
+
+## parameter max_iter 
+max_iter <- 10^3
+
+```
+
+
+#### stretched exponential upper tail
+```{r echo=FALSE, eval = TRUE}
+
+# define stretched exponential upper tail
+upper_tail_dist <- function(
+    t, 
+    t_min, 
+    r, 
+    a, 
+    L
+  ) {
+  
+  prob <- ifelse(t >= t_min, a(t) * exp(-L(t, r = r) * t^r), NA_real_)
+    
+  return(prob)
+}
+
+# define the distribution of X = (1-B) * min(X_1, t*) + B * max(X_2, t*)
+distribution_stretched_exp_tail <- function(
+  t, 
+  t_min, 
+  p, 
+  r, 
+  a = function() {return(1)}, 
+  L = log, 
+  lower_tail_dist = "normal", 
+  mu = 0, 
+  sd = 1
+){
+  
+  prob_upper_tail <- (1 - p) + p * 
+    (
+      1 - upper_tail_dist(t = t, t_min = t_min, r = r, a = a, L = L)
+    )
+  
+  if (lower_tail_dist == "normal") {
+    
+      prob_lower_tail <- (1 - p) * pnorm(t, mean = mu, sd = sd)
+      
+  }
+    
+  prob <- ifelse(t >= t_min, prob_upper_tail, prob_lower_tail)
+  
+  return(prob)
+  
+}
+
+# an example
+t_min = 2
+
+distribution_stretched_exp_tail(
+  t = t_min, 
+  t_min = t_min, 
+  p = p_mixture, 
+  r = r, 
+  a = a, 
+  L = L, 
+  lower_tail_dist = "normal", 
+  mu = mu, 
+  sd = sd
+)
+```
+
+#### Fréchet upper tail
+```{r echo=FALSE, eval = TRUE}
+
+distribution_frechet_tail <- function(
+  t, 
+  t_min, 
+  p, 
+  loc = 0, 
+  scale = 1, 
+  shape = 1, 
+  lower_tail_dist = "normal", 
+  mu = 0, 
+  sd = 1
+  ) {
+  
+  prob_upper_tail <- (1 - p) + p * 
+    pfrechet(q = t, loc = loc, scale = scale, shape = shape, lower.tail = TRUE) 
+  
+  if (lower_tail_dist == "normal") {
+    
+      prob_lower_tail <- (1 - p) * pnorm(t, mean = mu, sd = sd)
+      
+  }
+  
+  prob <- ifelse(t >= t_min, prob_upper_tail, prob_lower_tail)
+  
+  return(prob)
+}
+
+```
+
+
+#### plot of the cummulative distribution function
+```{r echo=FALSE, eval = TRUE, warning = FALSE}
+n_min = -1
+n_max = 4
+
+support <- seq(from = n_min, to = n_max, by = 0.01)
+
+dist_stretched_exp_tail <- distribution_stretched_exp_tail(
+  t = support, 
+  t_min = t_min, 
+  p = p_mixture,
+  r = r, 
+  a = a, 
+  L = L, 
+  lower_tail_dist = "normal", 
+  mu = mu, 
+  sd = sd
+)
+
+dist_frechet <- distribution_frechet_tail(
+  t = support, 
+  t_min, 
+  p = p_mixture,
+  loc = loc, 
+  scale = scale, 
+  shape = shape, 
+  lower_tail_dist = "normal", 
+  mu = mu, 
+  sd = sd
+)
+
+plot(support, dist_stretched_exp_tail, type = "s", ylab = "distribution", xlab = "")
+lines(support, dist_frechet, type = "s", col = "orange", lty = 2)
+
+## horizontal at P(min(X_1, t_min) <= t_min) = 1 - p
+lines(
+  support, rep(x = 1 - p_mixture, times = length(support)), col = "lightgray", lty = 2
+)
+
+```
+
+#### analytical representation of the ''density'' 
+```{r echo=FALSE, eval = TRUE}
+
+density_analytical <- function(
+  t, 
+  t_min, 
+  p, 
+  upper_tail_dist = "stretched", 
+  r, 
+  a = function() {return(1)}, 
+  L = log, 
+  loc = 0, 
+  scale = 1, 
+  shape = 1, 
+  lower_tail_dist = "normal", 
+  mu = 0, 
+  sd = 1
+) {
+  
+  if (upper_tail_dist == "stretched") {
+    
+    density_upper_tail <- ifelse(
+      t > 0, 
+      p * ( t^(r-1) * exp(-L(t, r = r) * t^r) * (1 + r * log(t)) ),
+      NA_real_
+    )
+    
+    density_upper_tail[which(t == t_min)] <- (1 - p) * (
+        1 - pnorm(q = t_min, mean = mu, sd = sd)
+      ) + 
+      p * ( 
+        1 - upper_tail_dist(t = t_min, t_min = t_min, r = r, a = a, L = L) 
+      )
+    
+  } else if (upper_tail_dist == "frechet") {
+    
+      density_upper_tail <- ifelse(
+        t > 0, 
+        p * dfrechet(x = t, loc = loc, scale = scale, shape = shape), 
+        NA_real_
+      )
+      
+      density_upper_tail[which(t == t_min)] <- (1 - p) * (
+          1 - pnorm(q = t_min, mean = mu, sd = sd)
+        ) + p * pfrechet(
+          q = t_min, loc = loc, scale = scale, shape = shape
+        )
+    
+  }
+  
+  if (lower_tail_dist == "normal") {
+    
+    density_lower_tail <- (1 - p) * dnorm(x = t, mean = mu, sd = sd)
+    
+  }
+  
+  density <- ifelse(t < t_min, density_lower_tail, density_upper_tail)
+  
+  return(density)
+}
+
+```
+
+
+#### plot ''density'' function
+```{r echo=FALSE, eval = TRUE, warning = FALSE}
+
+n_support <- 10^2
+n_min <- -2 + 1 / n_support
+n_max <- 8
+support_density <- seq(from = n_min, to = n_max, by = 1 / n_support)
+
+density_stretched_exp_tail <- density_analytical(
+  t = support_density, 
+  t_min = t_min, 
+  p = p_mixture, 
+  upper_tail_dist = "stretched", 
+  r = r, 
+  a = a, 
+  L = L, 
+  lower_tail_dist = "normal", 
+  mu = mu, 
+  sd = sd
+)
+
+density_frechet_tail <- density_analytical(
+  t = support_density, 
+  t_min = t_min, 
+  p = p_mixture, 
+  upper_tail_dist  = "frechet", 
+  loc = loc, 
+  scale = scale, 
+  shape = shape, 
+  lower_tail_dist = "normal", 
+  mu = mu, 
+  sd = sd
+)
+
+density_norm <- dnorm(support_density, mean = mu, sd = sd)
+
+y_max = 0.075 + max(
+  max(density_stretched_exp_tail, na.rm = TRUE), 
+  max(density_frechet_tail, na.rm = TRUE), 
+  max(density_norm)
+)
+
+plot(
+  support_density, 
+  density_stretched_exp_tail, 
+  type = "n", 
+  ylim = c(0, y_max), 
+  ylab = "density", 
+  xlab = ""
+)
+
+## density of the stretched exponential tail
+{
+  lines(
+    support_density[which(support_density < t_min)],
+    density_stretched_exp_tail[which(support_density < t_min)]
+  )
+  
+  lines(
+    support_density[which(support_density > t_min)],
+    density_stretched_exp_tail[which(support_density > t_min)]
+  )
+  
+  points(
+    support_density[max(which(support_density < t_min))], 
+    density_stretched_exp_tail[max(which(support_density < t_min))], 
+    col = "black", 
+    pch = 21, 
+    bg = "white",
+    cex = 0.7
+  )
+  
+  points(
+    support_density[max(which(support_density <= t_min))], 
+    density_stretched_exp_tail[max(which(support_density <= t_min))], 
+    col = "black", 
+    pch = 16, 
+    cex = 0.7
+  )
+  
+  points(
+    support_density[min(which(support_density > t_min))], 
+    density_stretched_exp_tail[min(which(support_density > t_min))], 
+    col = "black", 
+    pch = 21, 
+    bg = "white",
+    cex = 0.7
+  )
+  
+}
+
+## density of the Fréchet tail
+{
+  lines(
+    support_density[which(support_density < t_min)],
+    density_frechet_tail[which(support_density < t_min)], 
+    type = "l", 
+    col = "orange", 
+    lty = 2
+  )
+  
+  lines(
+    support_density[which(support_density > t_min)],
+    density_frechet_tail[which(support_density > t_min)], 
+    type = "l", 
+    col = "orange", 
+    lty = 2
+  )
+  
+  points(
+    support_density[max(which(support_density < t_min))], 
+    density_frechet_tail[max(which(support_density < t_min))], 
+    col = "orange", 
+    pch = 21, 
+    bg = "white",
+    cex = 0.7
+  )
+  
+  points(
+    support_density[max(which(support_density <= t_min))], 
+    density_frechet_tail[max(which(support_density <= t_min))], 
+    col = "orange", 
+    pch = 16, 
+    cex = 0.7
+  )
+  
+  points(
+    support_density[min(which(support_density > t_min))], 
+    density_frechet_tail[min(which(support_density > t_min))], 
+    col = "orange", 
+    pch = 21, 
+    bg = "white",
+    cex = 0.7
+  )
+  
+}
+
+#lines(support_density, density_frechet_tail, col = "blue", lty = 2)
+
+```
+
+
+#### Acceptance-Rejection Algorithm
+
+###### Estimate C > 0 such that f(x) =< C * g(x) for all x
+```{r echo=FALSE, eval = TRUE}
+
+## define a support
+n_C <- 10^4
+n_C_min <- t_min - 1 / n_C
+n_C_max <- 10^2
+support_C_approx <- seq(from = n_C_min, to = n_C_max, by = 1 / n_C)
+
+
+## scaling factor (lower tail is the same for both distributions)
+C_lower_tail <- 1
+
+## the Fréchet distribution has a heavier tail than the stretched exponential distribution
+C_upper_tail <- max(
+  density_analytical(
+    t = support_C_approx, 
+    t_min = t_min, 
+    p = p_mixture, 
+    upper_tail_dist = "stretched", 
+    r = r, 
+    a = a, 
+    L = L, 
+    lower_tail_dist = "normal", 
+    mu = mu, 
+    sd = sd
+  ) / density_analytical(
+    t = support_C_approx, 
+    t_min = t_min, 
+    p = p_mixture, 
+    upper_tail_dist  = "frechet", 
+    loc = loc, 
+    scale = scale, 
+    shape = shape, 
+    lower_tail_dist = "normal", 
+    mu = mu, 
+    sd = sd
+  ),
+  na.rm = TRUE
+)
+
+## define C (with some safety margin "0.1")
+C <- 0.1 + max(C_lower_tail, C_upper_tail)
+
+```
+
+#### Accept-Reject using analytical densities
+```{r echo=FALSE, eval = TRUE, warning = FALSE}
+
+a_r_analytical <- function(
+  t_min, 
+  p, 
+  r, 
+  a, 
+  L, 
+  mu = 0, 
+  sd = 1, 
+  loc = 0, 
+  scale = 1, 
+  shape = 1, 
+  max_iter = 10^3, 
+  C,
+  seed = 42
+) {
+  
+  #set.seed(seed)
+  X <- NA_real_
+  iter <- 1
+  
+  while((is.na(X) & (iter <= max_iter))) {
+  
+    iter <- iter + 1
+    
+    ## generate B ~ Bernouilli(p) to decide whether we sample from the lower / upper tail
+    B <- rbinom(n = 1, size = 1, prob = p)
+      
+    if (B == 0) {
+      
+      ## sample Y_1 (the lower tail)
+      r_norm <- rnorm(n = 1, mean = mu, sd = 1)
+      
+      ## get the value of max(Y_1, t_min)
+      min_Y_1_t_min <- ifelse(r_norm < t_min, r_norm, t_min)
+      
+      ## set max_Y_2_t_min to zero as we sample from the lower tail
+      max_Y_2_t_min <- 0
+      
+    } 
+    
+    if (B == 1) {
+      
+      ## sample Y_2 (the upper tail)
+      r_frechet <- evd::rfrechet(n = 1, loc = loc, scale = scale, shape = shape)
+      
+      ## get the value of max(Y_2, t_min)
+      max_Y_2_t_min <- ifelse(r_frechet > t_min, r_frechet, t_min)
+      
+      ## set min_Y_1_t_min to zero as we sample from the lower tail
+      min_Y_1_t_min <- 0
+      
+    }
+      
+    Y_mixed_Y_1_Y_2 <- (1 - B) * min_Y_1_t_min + B * max_Y_2_t_min
+    
+    ## uniform variable for A-R decision
+    U <- runif(n = 1, min = 0, max = 1)
+  
+    indicator_acceptance_rejection <- density_analytical(
+      t = Y_mixed_Y_1_Y_2, 
+      t_min = t_min, 
+      p = p, 
+      upper_tail_dist = "stretched", 
+      r = r, 
+      a = a, 
+      L = L, 
+      lower_tail_dist = "normal", 
+      mu = mu, 
+      sd = sd
+    ) / (
+      C * density_analytical(
+        t = Y_mixed_Y_1_Y_2, 
+        t_min = t_min, 
+        p = p, 
+        upper_tail_dist  = "frechet", 
+        loc = loc, 
+        scale = scale, 
+        shape = shape, 
+        lower_tail_dist = "normal", 
+        mu = mu, 
+        sd = sd
+      )
+    )
+    
+    print(indicator_acceptance_rejection)
+    
+    if (U <= indicator_acceptance_rejection) {
+      
+      X <- Y_mixed_Y_1_Y_2
+      
+      return(X)
+    }
+  }
+  
+  ## after max_iter trials, return NA_real_
+  return(X) 
+}
+
+```
+
+```{r echo=FALSE, eval = TRUE}
+
+X <- c()
+for (i in 1:10^3) {
+  X <- c(X, a_r_analytical(t_min = t_min, p = p_mixture, r = r, a = a, L = L, mu = mu, sd = sd, loc = loc, scale = scale, shape = shape, max_iter = max_iter, C = C))
+}
+
+summary(X)
+hist(X)
+
+plot(ecdf(X), verticals = TRUE, do.points = FALSE)
+```

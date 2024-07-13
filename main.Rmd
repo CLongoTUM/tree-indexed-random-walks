@@ -13,12 +13,13 @@ library(evd)
 
 # Example 2 of Gantert
 psi <- function(n, r = 0.5) {
-  psi <- ( r*n / log(n) )^(1 / r)
+  
+  psi <- ifelse(n > 1, ( r*n / log(n) )^(1 / r), 1)
   
   return(psi)
 }
 
-L <- function(n) {
+L <- function(n, r) {
   L <- log(n)
   
   return(L)
@@ -30,6 +31,7 @@ a <- function(n) {
 }
 
 r = 0.5
+
 
 ```
 
@@ -71,7 +73,7 @@ tail_support <- seq(from = n_min_tail, to = n_max_tail, by = (n_max_tail - n_min
 
 upper_tail_dist <- function(t, t_min, r, a, L) {
   
-  prob = a(t) * exp(-L(t) * t^r) * (t >= t_min)
+  prob = a(t) * exp(-L(t, r = r) * t^r) * (t >= t_min)
     
   return(prob)
 }
@@ -183,7 +185,7 @@ density_analytical <- function(
   }
   
   if (upper_tail_dist == "stretched") {
-    density_upper_tail <- ifelse(t > 0, p * ( a(t) * t^(r-1) * exp(-L(t)*t^r) * (r * log(t) + 1) ), NA_real_)
+    density_upper_tail <- ifelse(t > 0, p * ( a(t) * t^(r-1) * exp(-L(t, r = r)*t^r) * (r * log(t) + 1) ), NA_real_)
   } else if (upper_tail_dist == "frechet") {
       density_upper_tail <- ifelse(t > 0, p * dfrechet(t, loc = loc, scale = scale, shape = shape), NA_real_)
   }
@@ -345,38 +347,62 @@ h = 1e-5
 
 set.seed(42)
 
-while (k < 10^3) {
-  B <- rbinom(1, 1, prob = p)
-  y_norm <- min(rnorm(n = 1, mean = mu, sd = 1), t_min - 2*h)
+a_r_analytical <- function(t_min, p, r, a, L, mu, sd, loc, scale, shape, max_iter, C) {
   
-  ## sample X ~ Frechet, conditional on X > 2
-  u_uniform_for_frechet <- runif(1, min = pfrechet(2, loc = loc, scale = scale, shape = shape), max = 1)
-  while(u_uniform_for_frechet == 1) {
-    u_uniform_for_frechet <- runif(1, min = pfrechet(2, loc = loc, scale = scale, shape = shape), max = 1)
-  }
-  y_frechet <- qfrechet(u_uniform_for_frechet, loc = loc, scale = scale, shape = shape)
+  X <- NA_real_
+  iter <- 1
   
-  y_mixed_frechet <- (1 - B) * y_norm + B * y_frechet
+  while((is.na(X) & (iter < max_iter))) {
   
-  ## uniform variable for A-R decision
-  u_uniform <- runif(1, min = 0, max = 1)
-
-  indicator_acceptance_rejection <- density_analytical(
-  t = y_mixed_frechet, t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
-) / (C * density_analytical(
-      t = y_mixed_frechet, t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+    iter <- iter + 1
+    
+    ## sample a binomial rv to decide whether we sample from lower or upper tail
+    B <- rbinom(n = 1, size = 1, prob = p)
+    
+    if (B == 0) {
+      r_norm <- rnorm(n = 1, mean = mu, sd = 1)
+      y_norm <- ifelse(r_norm < t_min, r_norm, t_min)
+    } else {
+      y_norm <- 0
+    }
+    
+    if (B == 1) {
+      ## sample X ~ Frechet, conditional on X > 2
+      u_uniform_for_frechet <- runif(1, min = evd::pfrechet(q = t_min, loc = loc, scale = scale, shape = shape), max = 1)
+      
+      ## do not allow runif == 1
+      while(u_uniform_for_frechet == 1) {
+        u_uniform_for_frechet <- runif(n = 1, min = evd::pfrechet(q = t_min, loc = loc, scale = scale, shape = shape), max = 1)
+      }
+      y_frechet <- evd::qfrechet(p = u_uniform_for_frechet, loc = loc, scale = scale, shape = shape)
+    }
+    
+    y_mixed_frechet <- (1 - B) * y_norm + B * y_frechet
+    
+    ## uniform variable for A-R decision
+    u_uniform <- runif(n = 1, min = 0, max = 1)
+  
+    indicator_acceptance_rejection <- density_analytical(
+    t = y_mixed_frechet, t_min = t_min, p = p, upper_tail_dist = "stretched", r = r, a = a, L = L, lower_tail_dist = "normal", mu = mu, sd = sd
+  ) / (C * density_analytical(
+        t = y_mixed_frechet, t_min = t_min, p = p, upper_tail_dist  = "frechet", loc = loc, scale = scale, shape = shape, lower_tail_dist = "normal", mu = mu, sd = sd
+      )
     )
-  )
-  
-  if (is.na(indicator_acceptance_rejection))
-    {browser()}
-  
-  if (u_uniform <= indicator_acceptance_rejection) {
-    X[k] <- y_mixed_frechet
-    k <- k + 1
+    
+    if (u_uniform <= indicator_acceptance_rejection) {
+      X <- y_mixed_frechet
+      
+      return(X)
+    }
   }
+  
+  return(X) ## in this case X = NA_real_
 }
 
+X <- c()
+for (i in 1:10^3) {
+  X <- c(X, a_r_analytical(t_min = t_min, p = p_mixture, r = r, a = a, L = L, mu = mu, sd = sd, loc = loc, scale = scale, shape = shape, max_iter = max_iter, C = C))
+}
 ```
 
 ```{r echo=FALSE, eval = TRUE}
@@ -384,4 +410,218 @@ summary(X)
 hist(X)
 
 plot(ecdf(X), verticals = TRUE, do.points = FALSE)
+```
+
+
+```{r echo=FALSE, eval = TRUE}
+
+## reproduction distribution (conditioned on >= 1)
+rgeom_greater_0 <- function(n = 1, prob) {
+  
+  ## sample from a Geometrix variable conditioned that it is greater than 0
+  qgeom(runif(n = n, pgeom(q = 0, prob = prob),1), prob = prob)
+  
+}
+
+tree_indexed_random_walk <- function(dist = rgeom_greater_0, prob, generations = 5, initial_population = 1, 
+                 t_min, p_mixture, r, a, L, mu, sd, loc, scale, shape, seed = 42, max_iter = 10^5, C) {
+  
+  set.seed(seed)
+  
+  id <- 1
+  label <- a_r_analytical(t_min = t_min, p = p_mixture, r = r, a = a, L = L, mu = mu, sd = sd, loc = loc, scale = scale, shape = shape, max_iter = max_iter, C = C)
+    
+  Z <- list("id" = id, "parent_id" = NA_real_, "generation" = 0, "parent_generation" = 0, "label" = label, "S_v" = label, "S_v_normalized" = label / psi(n = 0,r = r), "parent_S_v_normalized" = NA_real_)
+  
+  for (n in 1:generations) {
+    
+    ## get the id's of the particles in the previous generation
+    particles_in_previous_generation <- Z$id[which(Z[["generation"]] == n - 1)]
+    
+    for (k in seq_along(particles_in_previous_generation)) {
+      
+      ## sample the number of offspring of the k-th particle in the last generation
+      number_of_offspring_temp <- dist(n = 1, prob = prob)
+      
+      for (j in 1:number_of_offspring_temp) {
+        
+        ## sample a new label
+        label_temp <- a_r_analytical(t_min = t_min, p = p_mixture, r = r, a = a, L = L, mu = mu, sd = sd, loc = loc, scale = scale, shape = shape, max_iter = max_iter, C = C)
+        
+        ## the new spatial position is given by the previous particle position + the new lable
+        S_v_temp <- Z$S_v[particles_in_previous_generation[k]] + label_temp
+        S_v_normalized_temp <- S_v_temp / psi(n = n, r = r)
+        
+        id <- id + 1
+        Z$id <- c(Z$id, id)
+        Z$parent_id <- c(Z$parent_id, particles_in_previous_generation[k])
+        Z$generation <- c(Z$generation, n)
+        Z$parent_generation <- c(Z$parent_generation, n - 1)
+        Z$label <- c(Z$label, label_temp)
+        Z$S_v <- c(Z$S_v, S_v_temp)
+        Z$S_v_normalized <- c(Z$S_v_normalized, S_v_normalized_temp)
+        Z$parent_S_v_normalized <- c(Z$parent_S_v_normalized, Z$S_v[particles_in_previous_generation[k]] / psi(n = n - 1, r = r))
+        
+      }
+      
+    }
+  }
+  
+  return(Z)
+}
+
+```
+
+```{r echo=FALSE, eval = TRUE}
+
+prob_geom = 0.65
+Z <- tree_indexed_random_walk(dist = rgeom_greater_0, prob = prob_geom, generations = 5, initial_population = 1, 
+                 t_min = t_min, p_mixture = p, r = r, a = a, L = L, mu = mu, sd = sd, loc = loc, scale = scale, shape = shape, max_iter = 10^5, C = C) 
+
+## install.packages("igraph")
+library(igraph)
+
+Z_df <- data.frame(
+  id = Z$id,
+  parent_id = Z$parent_id,
+  generation = Z$generation,
+  label = Z$label,
+  S_v = Z$S_v
+)
+
+Z_df$label[which(id == 1)] <- 1
+
+edges <- na.omit(Z_df[, c("parent_id", "id")])
+g <- graph_from_data_frame(edges, directed = TRUE)
+
+
+
+plot.igraph(g, layout = layout_as_tree, vertex.label = round(Z_df$label[which(Z_df$id == V(g)$name)], 1), vertex.label.cex = 0.85, vertex.size = 25, arrow.color = "black", edge.arrow.size = 0, vertex.color = "lightgray", main = "Galton-Watson Process Tree")
+
+```
+
+
+
+```{r echo=FALSE, eval = TRUE}
+
+#plot(NULL, xlim = range(Z_df$generation), ylim = range(Z_df$S_v), 
+#     xlab = "Generation", ylab = "tree-indexed random walk", 
+#     xaxt = 'n', yaxt = 'n', bty = 'n')
+
+# Add custom x and y axes
+#axis(1, at = unique(Z_df$generation))
+#axis(2, at = pretty(range(Z_df$S_v)))
+
+# 0.6, 15 is gut 
+prob_geom <- 0.7
+n_generations <- 10
+
+Z <- tree_indexed_random_walk(dist = rgeom_greater_0, prob = prob_geom, generations = n_generations, initial_population = 1, 
+                 t_min = t_min, p_mixture = p, r = r, a = a, L = L, mu = mu, sd = sd, loc = loc, scale = scale, shape = shape, max_iter = 10^5, C = C) 
+
+## install.packages("igraph")
+library(igraph)
+
+Z_df <- data.frame(
+  id = Z$id,
+  parent_id = Z$parent_id,
+  generation = Z$generation,
+  parent_generation = Z$parent_generation,
+  label = Z$label,
+  S_v = Z$S_v,
+  S_v_normalized = Z$S_v_normalized,
+  parent_S_v_normalized = Z$parent_S_v_normalized
+)
+
+edges <- na.omit(Z_df[, c("parent_id", "id")])
+g <- graph_from_data_frame(edges, directed = TRUE)
+
+
+layout_brw <- matrix(ncol = 2, nrow = vcount(g))
+layout_brw[,1] <- Z_df$generation # x-axis: generation
+layout_brw[,2] <- Z_df$S_v_normalized # y-axis: label
+
+plot.igraph(g, layout = layout_brw, vertex.label = NA, vertex.size = 3, edge.arrow.size = 0, vertex.color = "lightgray")
+
+```
+
+```{r echo=FALSE, eval = TRUE}
+
+## plot that shows the maximum is driven by few large increments
+# r <- 0.6 
+# seed = 8 
+# t_min <- 10
+# prob_geom <- 0.6
+# n_generations <- 15
+
+## plot that shows trend decline to the limiting speed
+# r <- 0.6
+# seed = 8 
+# t_min <- 10
+# prob_geom <- 0.75
+# n_generations <- 30
+
+r <- 0.5
+seed = 8
+t_min <- 2
+prob_geom <- 0.875
+m <- mean(rgeom_greater_0(n = 10^4, prob = prob_geom))
+
+speed <- log(m)^(1 / r)
+
+n_generations <- 50
+
+Z <- tree_indexed_random_walk(dist = rgeom_greater_0, prob = prob_geom, generations = n_generations, initial_population = 1, 
+                 t_min = t_min, p_mixture = p, r = r, a = a, L = L, mu = mu, sd = sd, loc = loc, scale = scale, shape = shape, seed = seed, max_iter = 10^5, C = C) 
+
+## install.packages("igraph")
+library(igraph)
+
+Z_df <- data.frame(
+  id = Z$id,
+  parent_id = Z$parent_id,
+  generation = Z$generation,
+  parent_generation = Z$parent_generation,
+  label = Z$label,
+  S_v = Z$S_v,
+  S_v_normalized = Z$S_v_normalized,
+  parent_S_v_normalized = Z$parent_S_v_normalized
+)
+
+edges <- na.omit(Z_df[, c("parent_id", "id")])
+g <- graph_from_data_frame(edges, directed = TRUE)
+
+layout_brw <- matrix(ncol = 2, nrow = vcount(g))
+layout_brw[,1] <- Z_df$generation # x-axis: generation
+layout_brw[,2] <- Z_df$S_v_normalized # y-axis: label
+
+
+library(ggplot2)
+
+ggplot() +
+    geom_hline(yintercept = speed, linetype = "dashed", color = "red") +
+    geom_segment(data=Z_df[Z_df$id != 1, ],aes(x = parent_generation, xend = generation, y = parent_S_v_normalized, yend = S_v_normalized),color="black") +
+    geom_point(data = Z_df, aes(x = generation,y = S_v_normalized), size = 2.25, colour="black") +  # adds a black border around the nodes
+    geom_point(data = Z_df, aes(x = generation,y = S_v_normalized),size=1.35,colour="lightgrey") +
+    scale_x_continuous(expand = c(0,1))+
+    scale_y_continuous(expand = c(0,1))+ 
+    theme_bw() 
+
+# library(magrittr)
+Z_df_max <- Z_df
+Z_df_max <- Z_df_max %>%
+  dplyr::group_by(generation) %>%
+  dplyr::filter(S_v_normalized == max(S_v_normalized)) %>%
+  dplyr::ungroup()
+
+ggplot() +
+    geom_hline(yintercept = speed, linetype = "dashed", color = "red") +
+    geom_point(data=Z_df_max[Z_df_max$id != 1, ],aes(x = generation, y = S_v_normalized),color="black") +
+    scale_x_continuous(expand = c(0,1)) +
+    scale_y_continuous(expand = c(0,1)) +
+    theme_classic()
+
+## Frage: welchen Einfluss haben die Konstanten die wir haben verschwinden lassen 
+#### -> Konstante verschwunden durch X | X > 2 für upper tail
+
 ```
